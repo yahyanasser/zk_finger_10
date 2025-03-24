@@ -95,15 +95,16 @@ public class ZKUSBManager {
     }
 
     public boolean registerUSBPermissionReceiver() {
+
         if (null == mContext || mbRegisterFilter) {
             Log.d("USB Manager", "USB register false");
             return false;
         }
-        IntentFilter filter = new IntentFilter();
+         IntentFilter filter = new IntentFilter("android.hardware.usb.action.USB_DEVICE_ATTACHED");
         filter.addAction(ACTION_USB_PERMISSION);
         filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
         filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
-        mContext.registerReceiver(usbMgrReceiver, filter);
+        mContext.registerReceiver(usbMgrReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         mbRegisterFilter = true;
         Log.d("USB Manager", "USB register true");
         return true;

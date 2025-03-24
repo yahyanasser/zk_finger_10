@@ -1,7 +1,7 @@
 package com.mamasodikov.zkfinger10;
 
-import static java.nio.file.Paths.get;
-
+import android.app.Activity;
+import android.content.Context;
 import android.graphics.Bitmap;
 
 import com.mamasodikov.zkfinger10.util.FingerListener;
@@ -13,12 +13,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import io.flutter.embedding.engine.plugins.FlutterPlugin;
+import io.flutter.embedding.engine.plugins.activity.ActivityAware;
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
+import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
-import io.flutter.plugin.common.PluginRegistry.Registrar;
 import io.reactivex.Observer;
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.Disposable;
@@ -28,7 +31,7 @@ import io.reactivex.subjects.PublishSubject;
 /**
  * ZkFingerPlugin
  */
-public class ZkFinger10Plugin implements MethodCallHandler, FingerListener {
+public class ZkFinger10Plugin implements FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandler, FingerListener {
 
     private static final String METHOD_FINGER_OPEN_CONNECTION =
             "openConnection";
@@ -57,121 +60,112 @@ public class ZkFinger10Plugin implements MethodCallHandler, FingerListener {
     private static final String CHANNEL_FINGER_IMAGE = "com.mamasodikov.zkfinger10/finger_image";
     private static PublishSubject<FingerStatus> fingerStatusSubject = PublishSubject.create();
     private static PublishSubject<byte[]> fingerImageSubject = PublishSubject.create();
-    @SuppressWarnings("deprecation")
-    private final Registrar registrar;
+    private MethodChannel channel;
+    private Activity activity;
+    private Context applicationContext;
     private ZKFingerPrintHelper zkFingerPrintHelper;
     private Result result;
 
-    @SuppressWarnings("deprecation")
-    private ZkFinger10Plugin(Registrar registrar) {
-        this.registrar = registrar;
+    // FlutterPlugin lifecycle
+    @Override
+    public void onAttachedToEngine(FlutterPlugin.FlutterPluginBinding binding) {
+        applicationContext = binding.getApplicationContext();
+        BinaryMessenger messenger = binding.getBinaryMessenger();
+        channel = new MethodChannel(messenger, "zkfinger");
+        channel.setMethodCallHandler(this);
+
+        // Initialize event channels using the new messenger.
+        initFingerStatusChangeListener(messenger);
+        initFingerImageListener(messenger);
     }
 
-    /**
-     * Plugin registration.
-     */
-    @SuppressWarnings("deprecation")
-    public static void registerWith(Registrar registrar) {
-        final MethodChannel channel = new MethodChannel(registrar.messenger(), "zkfinger");
-        initFingerStatusChangeListener(registrar);
-        initFingerImageListener(registrar);
-
-        final ZkFinger10Plugin instance = new ZkFinger10Plugin(registrar);
-        channel.setMethodCallHandler(instance);
-
-        registrar.addViewDestroyListener(
-                view -> {
-                    instance.zkFingerPrintHelper.onDestroy();
-                    return false; // We are not interested in assuming ownership of the NativeView.
-                });
+    @Override
+    public void onDetachedFromEngine(FlutterPlugin.FlutterPluginBinding binding) {
+        channel.setMethodCallHandler(null);
     }
 
+    // ActivityAware lifecycle
+    @Override
+    public void onAttachedToActivity(ActivityPluginBinding binding) {
+        activity = binding.getActivity();
+    }
 
-    @SuppressWarnings("deprecation")
-    private static void initFingerStatusChangeListener(Registrar registrar) {
-        final EventChannel statusChangeEventChannel = new EventChannel(registrar.messenger(), CHANNEL_FINGER_STATUS_CHANGE);
+    @Override
+    public void onDetachedFromActivityForConfigChanges() {
+        activity = null;
+    }
+
+    @Override
+    public void onReattachedToActivityForConfigChanges(ActivityPluginBinding binding) {
+        activity = binding.getActivity();
+    }
+
+    @Override
+    public void onDetachedFromActivity() {
+        activity = null;
+    }
+
+    // Update init methods to use BinaryMessenger
+    private static void initFingerStatusChangeListener(BinaryMessenger messenger) {
+        EventChannel statusChangeEventChannel = new EventChannel(messenger, CHANNEL_FINGER_STATUS_CHANGE);
         statusChangeEventChannel.setStreamHandler(new EventChannel.StreamHandler() {
             @Override
             public void onListen(Object o, final EventChannel.EventSink eventSink) {
-                fingerStatusSubject.subscribeOn(Schedulers.newThread()).observeOn(AndroidSchedulers.mainThread()).subscribe(new Observer<FingerStatus>() {
-                    @Override
-                    public void onSubscribe(Disposable d) {
-
-                    }
-
-                    @Override
-                    public void onNext(FingerStatus status) {
-                        HashMap<String, Object> statusMap = new HashMap<>();
-                        statusMap.put("id", status.getId());
-                        statusMap.put("message", status.getMessage());
-                        statusMap.put("data", status.getData());
-                        statusMap.put("fingerStatus", status.getFingerStatusType().ordinal());
-                        eventSink.success(statusMap);
-//                        eventSink.success(status);
-                    }
-
-                    @Override
-                    public void onError(Throwable e) {
-
-                    }
-
-                    @Override
-                    public void onComplete() {
-
-                    }
-                });
+                fingerStatusSubject.subscribeOn(Schedulers.newThread())
+                        .observeOn(AndroidSchedulers.mainThread())
+                        .subscribe(new Observer<FingerStatus>() {
+                            @Override
+                            public void onSubscribe(Disposable d) { }
+                            @Override
+                            public void onNext(FingerStatus status) {
+                                HashMap<String, Object> statusMap = new HashMap<>();
+                                statusMap.put("id", status.getId());
+                                statusMap.put("message", status.getMessage());
+                                statusMap.put("data", status.getData());
+                                statusMap.put("fingerStatus", status.getFingerStatusType().ordinal());
+                                eventSink.success(statusMap);
+                            }
+                            @Override
+                            public void onError(Throwable e) { }
+                            @Override
+                            public void onComplete() { }
+                        });
             }
-
             @Override
-            public void onCancel(Object o) {
-
-            }
+            public void onCancel(Object o) { }
         });
     }
 
-    @SuppressWarnings("deprecation")
-    private static void initFingerImageListener(Registrar registrar) {
-        final EventChannel imageEventChannel = new EventChannel(registrar.messenger(), CHANNEL_FINGER_IMAGE);
+    private static void initFingerImageListener(BinaryMessenger messenger) {
+        EventChannel imageEventChannel = new EventChannel(messenger, CHANNEL_FINGER_IMAGE);
         imageEventChannel.setStreamHandler(new EventChannel.StreamHandler() {
             @Override
             public void onListen(Object o, final EventChannel.EventSink eventSink) {
-                fingerImageSubject.subscribeOn(Schedulers.newThread()).observeOn(AndroidSchedulers.mainThread()).subscribe(new Observer<byte[]>() {
-                    @Override
-                    public void onSubscribe(Disposable d) {
-
-                    }
-
-                    @Override
-                    public void onNext(byte[] imageBytes) {
-                        eventSink.success(imageBytes);
-                    }
-
-                    @Override
-                    public void onError(Throwable e) {
-
-                    }
-
-                    @Override
-                    public void onComplete() {
-
-                    }
-                });
+                fingerImageSubject.subscribeOn(Schedulers.newThread())
+                        .observeOn(AndroidSchedulers.mainThread())
+                        .subscribe(new Observer<byte[]>() {
+                            @Override
+                            public void onSubscribe(Disposable d) { }
+                            @Override
+                            public void onNext(byte[] imageBytes) {
+                                eventSink.success(imageBytes);
+                            }
+                            @Override
+                            public void onError(Throwable e) { }
+                            @Override
+                            public void onComplete() { }
+                        });
             }
-
             @Override
-            public void onCancel(Object o) {
-
-            }
+            public void onCancel(Object o) { }
         });
     }
 
     @Override
-    public void onMethodCall(MethodCall call, Result result) {
+    public void onMethodCall(MethodCall call, MethodChannel.Result result) {
         this.result = result;
         if (zkFingerPrintHelper == null)
-
-            zkFingerPrintHelper = new ZKFingerPrintHelper(registrar.activity(), registrar.context(), this);
-
+            zkFingerPrintHelper = new ZKFingerPrintHelper(activity, applicationContext, this);
 
         switch (call.method) {
             case "getPlatformVersion":
@@ -306,15 +300,6 @@ public class ZkFinger10Plugin implements MethodCallHandler, FingerListener {
 
     @Override
     public void onCaptureFinger(Bitmap fingerBitmap) {
-
-        //Calculate how many bytes our image consists of.
-
-//        int bytes = fingerBitmap.getByteCount();
-//        //or we can calculate bytes this way. Use a different value than 4 if you don't use 32bit images.
-//        //int bytes = b.getWidth()*b.getHeight()*4;
-//        ByteBuffer buffer = ByteBuffer.allocate(bytes); //Create a new buffer
-//        fingerBitmap.copyPixelsToBuffer(buffer); //Move the byte data to the buffer
-//        byte[] array = buffer.array(); //Get the underlying array containing the data.
 
         ByteArrayOutputStream stream = new ByteArrayOutputStream();
         fingerBitmap.compress(Bitmap.CompressFormat.PNG, 100, stream);
